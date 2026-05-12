@@ -75,7 +75,7 @@ def StartGrabbing(camera):
 
 def GrabFrame(camera, frameNumber):
 
-	return camera.RetrieveResult(0, pylon.TimeoutHandling_ThrowException)
+	return camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException)
 
 
 def GetImageArray(grabResult):

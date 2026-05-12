@@ -126,7 +126,7 @@ void FlushSerialBuffer() {
 
 void ResetTimer() {
   
-  delay(4000);
+  delay(500);
   FlushSerialBuffer();
   frame_count = 0;
   time_zero = frame_count * frame_period;

@@ -6,7 +6,6 @@ reduce redundancy in campy code.
 import os, sys, time, csv, logging
 import numpy as np
 from collections import deque
-from scipy import io as sio
 
 
 def ImportCam(make):
@@ -196,13 +195,6 @@ def SaveMetadata(cam_params, grabdata):
 		npy_filename = os.path.join(full_folder_name, 'frametimes.npy')
 		x = np.array([grabdata['frameNumber'], grabdata['timeStamp']])
 		np.save(npy_filename,x)
-
-		# Also save frame data to MATLAB file
-		mat_filename = os.path.join(full_folder_name, 'frametimes.mat')
-		matdata = {};
-		matdata['frameNumber'] = grabdata['frameNumber']
-		matdata['timeStamp'] = grabdata['timeStamp']
-		sio.savemat(mat_filename, matdata, do_compression=True)
 
 		# Save parameters and recording metadata to csv spreadsheet
 		csv_filename = os.path.join(full_folder_name, 'metadata.csv')

@@ -18,12 +18,14 @@ class QueueKeyboardInterrupt(object):
 	def __enter__(self):
 		self.signal_received = False
 		self.old_handler = signal.signal(signal.SIGINT, self.handler)
-				
+		if hasattr(signal, 'SIGBREAK'):
+			self.old_break_handler = signal.signal(signal.SIGBREAK, self.handler)
+
 	def handler(self, sig, frame):
 		self.signal_received = (sig, frame)
-		print('SIGINT received. KeyboardInterrupt has been queued.', flush=True)
+		print('Stop signal received. KeyboardInterrupt has been queued.', flush=True)
 		self.queue.append(self.message)
-	
+
 	def __exit__(self, type, value, traceback):
 		pass
 
@@ -42,10 +44,12 @@ class HandleKeyboardInterrupt:
 	def __enter__(self):
 		self.signal_received = False
 		self.old_handler = signal.signal(signal.SIGINT, self.handler)
-				
+		if hasattr(signal, 'SIGBREAK'):
+			self.old_break_handler = signal.signal(signal.SIGBREAK, self.handler)
+
 	def handler(self, sig, frame):
 		self.signal_received = (sig, frame)
-		print('SIGINT received. KeyboardInterrupt has been handled.', flush=True)
-	
+		print('Stop signal received. KeyboardInterrupt has been handled.', flush=True)
+
 	def __exit__(self, type, value, traceback):
 		pass

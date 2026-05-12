@@ -1,8 +1,11 @@
 """
 """
-from imageio_ffmpeg import write_frames
+import subprocess
 import os, sys, time, logging
+from imageio_ffmpeg import get_ffmpeg_exe
 from campy.utils.utils import QueueKeyboardInterrupt
+
+PIPE_BUFSIZE = 4 * 1024 * 1024
 
 def OpenWriter(cam_params, queue):
 	try:
@@ -15,22 +18,21 @@ def OpenWriter(cam_params, queue):
 			os.makedirs(folder_name)
 			print("Made directory {}.".format(folder_name))
 
-		# Flip blue and red for flir camera input
 		if cam_params["pixelFormatInput"] == "bayer_bggr8" and cam_params["cameraMake"] == "flir":
 			cam_params["pixelFormatInput"] == "bayer_rggb8"
 
-		# Load encoding parameters from cam_params
 		pix_fmt_out = cam_params["pixelFormatOutput"]
 		codec = str(cam_params["codec"])
 		quality = str(cam_params["quality"])
 		preset = str(cam_params["preset"])
 		frameRate = str(cam_params["frameRate"])
 		gpuID = str(cam_params["gpuID"])
+		w = cam_params["frameWidth"]
+		h = cam_params["frameHeight"]
+		pix_fmt_in = cam_params["pixelFormatInput"]
 
-		# Load defaults
 		gpu_params = []
 
-		# CPU compression
 		if cam_params["gpuID"] == -1:
 			print("Opened: {} using CPU to compress the stream.".format(full_file_name))
 			if preset == "None":
@@ -51,16 +53,13 @@ def OpenWriter(cam_params, queue):
 				gpu_params.append("nal-hrd=cbr")
 			elif cam_params["codec"] == "h265":
 				codec = "libx265"
-
-		# GPU compression
 		else:
-			# Nvidia GPU (NVENC) encoder optimized parameters
 			print("Opened: {} using GPU {} to compress the stream.".format(full_file_name, cam_params["gpuID"]))
 			if cam_params["gpuMake"] == "nvidia":
 				if preset == "None":
 					preset = "fast"
 				gpu_params = [
-					"-preset", preset, # set to "fast", "llhp", or "llhq" for h264 or hevc
+					"-preset", preset,
 					"-qp", quality,
 					"-bf:v", "0",
 					"-gpu", gpuID,
@@ -69,13 +68,10 @@ def OpenWriter(cam_params, queue):
 					codec = "h264_nvenc"
 				elif cam_params["codec"] == "h265":
 					codec = "hevc_nvenc"
-
-			# AMD GPU (AMF/VCE) encoder optimized parameters
 			elif cam_params["gpuMake"] == "amd":
-				# Preset not supported by AMF
 				gpu_params = [
 					"-usage", "lowlatency",
-					"-rc", "cqp", # constant quantization parameter
+					"-rc", "cqp",
 					"-qp_i", quality,
 					"-qp_p", quality,
 					"-qp_b", quality,
@@ -87,8 +83,6 @@ def OpenWriter(cam_params, queue):
 					codec = "h264_amf"
 				elif cam_params["codec"] == "h265":
 					codec = "hevc_amf"
-
-			# Intel iGPU encoder (Quick Sync) optimized parameters				
 			elif cam_params["gpuMake"] == "intel":
 				if preset == "None":
 					preset = "faster"
@@ -107,57 +101,54 @@ def OpenWriter(cam_params, queue):
 		logging.error("Caught exception at writer.py OpenWriter: {}".format(e))
 		raise
 
-	# Initialize writer object (imageio-ffmpeg)
-	while(True):
-		try:
-			writer = write_frames(
-				full_file_name,
-				[cam_params["frameWidth"], cam_params["frameHeight"]], # size [W,H]
-				fps=cam_params["frameRate"],
-				quality=None,
-				codec=codec,
-				pix_fmt_in=cam_params["pixelFormatInput"], # "bayer_bggr8", "gray", "rgb24", "bgr0", "yuv420p"
-				pix_fmt_out=pix_fmt_out,
-				bitrate=None,
-				ffmpeg_log_level=cam_params["ffmpegLogLevel"], # "warning", "quiet", "info"
-				input_params=["-an"], # "-an" no audio
-				output_params=gpu_params,
-				)
-			writer.send(None) # Initialize the generator
-			writing = True
-			break
-			
-		except Exception as e:
-			logging.error("Caught exception at writer.py OpenWriter: {}".format(e))
-			raise
-			break
+	cmd = [
+		get_ffmpeg_exe(),
+		"-y",
+		"-f", "rawvideo",
+		"-vcodec", "rawvideo",
+		"-s", "{}x{}".format(w, h),
+		"-pix_fmt", pix_fmt_in,
+		"-r", frameRate,
+		"-an",
+		"-i", "-",
+		"-vcodec", codec,
+		"-pix_fmt", pix_fmt_out,
+		"-r", frameRate,
+	] + gpu_params + [
+		"-loglevel", cam_params["ffmpegLogLevel"],
+		full_file_name,
+	]
 
-	# Initialize read queue object to signal interrupt
+	proc = subprocess.Popen(
+		cmd,
+		stdin=subprocess.PIPE,
+		stdout=subprocess.DEVNULL,
+		stderr=subprocess.PIPE,
+		bufsize=PIPE_BUFSIZE,
+	)
+	writing = True
+
 	readQueue = {}
 	readQueue["queue"] = queue
 	readQueue["message"] = "STOP"
 
-	return writer, writing, readQueue
+	return proc, writing, readQueue
 
 def WriteFrames(cam_params, writeQueue, stopReadQueue, stopWriteQueue):
-	# Start ffmpeg video writer 
-	writer, writing, readQueue = OpenWriter(cam_params, stopReadQueue)
+	proc, writing, readQueue = OpenWriter(cam_params, stopReadQueue)
+	fd = proc.stdin.fileno()
 
 	with QueueKeyboardInterrupt(readQueue):
-		# Write until interrupted and/or stop message received
 		while(writing):
 			if writeQueue:
-				writer.send(writeQueue.popleft())
+				os.write(fd, writeQueue.popleft())
 			else:
-				# Once queue is depleted and grabber stops, then stop writing
 				if stopWriteQueue:
 					writing = False
-				# Otherwise continue writing
 				time.sleep(0.01)
 
-	# Close up...
 	print("Closing video writer for {}. Please wait...".format(cam_params["cameraName"]))
-	time.sleep(1)
-	writer.close()
+	proc.stdin.close()
+	proc.wait(timeout=10)
     
 
